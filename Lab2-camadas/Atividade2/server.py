@@ -2,9 +2,6 @@ import socket
 from operator import itemgetter
 from re import findall
 
-HOST = ''   #interface padrao de comunicacao da maquina
-PORT = 5000 #identifica o port do processo na maquina
-
 #---CAMADA DE PROCESSAMENTO DE DADOS---:
 def processData(fileName):
     fileString = accessData(fileName) #Requere os dados em formato de string da Camada de Acesso a Dados.
@@ -47,6 +44,9 @@ def accessData(fileName):
 
 
 #---MAIN---:
+
+HOST = ''   #interface padrao de comunicacao da maquina
+PORT = 5000 #identifica o port do processo na maquina
 
 #Cria o descritor de socket:
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #argumento indica comunicacao via internet e TCP

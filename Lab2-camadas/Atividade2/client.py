@@ -1,10 +1,7 @@
 import socket
 
-HOST = 'localhost' #configuracao de ip da aplicacao servidor
-PORT = 5000        #identifica o port do processo na maquina
-
 #---CAMADA DE INTERFACE DE USUARIO---:
-def userInterface():
+def userInterface(sock):
     while True:
         fileName = input("Nome do arquivo a ser lido: ")
         if (fileName == 'exit' or fileName == 'Exit'): break #Sai do loop caso o usuario inserir 'exit'.
@@ -14,6 +11,9 @@ def userInterface():
 
 
 #---MAIN---:
+
+HOST = 'localhost' #configuracao de ip da aplicacao servidor
+PORT = 5000        #identifica o port do processo na maquina
 
 #Cria descritor de socket
 sock = socket.socket() #socket.AF_INET, socket.SOCK_STREAM sao passados como argumentos por default!
@@ -25,8 +25,8 @@ sock.connect((HOST, PORT))
 print("Conexao estabelecida! Envie \'exit\' como mensagem para encerrar a conexao e fechar o programa.")
 
 #Chamada da Camada de Interface de Usuário:
-userInterface()
+userInterface(sock)
 
 #Encerra a conexao:
-print('Desconectando...')
+print('\nDesconectando...\n')
 sock.close()
