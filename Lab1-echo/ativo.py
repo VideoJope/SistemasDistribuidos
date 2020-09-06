@@ -22,5 +22,5 @@ while True:
     print(str(msg, encoding='utf-8'))
 
 #Encerra a conexao:
-print('Desconectando...')
+print("Desconectando...")
 sock.close()
