@@ -1,9 +1,9 @@
 import socket
 
-HOST = 'localhost' #configuracao de ip da aplicacao passiva
+HOST = 'localhost' #configuracao de ip da aplicacao servidor
 PORT = 5000        #identifica o port do processo na maquina
 
-#CAMADA DE INTERFACE DE USUARIO:
+#---CAMADA DE INTERFACE DE USUARIO---:
 def userInterface():
     while True:
         fileName = input("Nome do arquivo a ser lido: ")
@@ -13,7 +13,7 @@ def userInterface():
         print(str(outData, encoding = 'utf-8')) #Imprime os dados.
 
 
-#MAIN:
+#---MAIN---:
 
 #Cria descritor de socket
 sock = socket.socket() #socket.AF_INET, socket.SOCK_STREAM sao passados como argumentos por default!

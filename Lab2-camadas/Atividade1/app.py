@@ -2,7 +2,7 @@ from operator import itemgetter
 from re import findall
 
 
-#CAMADA DE INTERFACE DE USUARIO:
+#---CAMADA DE INTERFACE DE USUARIO---:
 def userInterface():
     print("Aplicacao inicializada! Insira 'exit' como nome do arquivo para sair do programa.")
     while True:
@@ -13,7 +13,7 @@ def userInterface():
         print(outData) #Imprime os dados.
 
 
-#CAMADA DE PROCESSAMENTO DE DADOS:
+#---CAMADA DE PROCESSAMENTO DE DADOS---:
 def processData(fileName):
     fileString = accessData(fileName) #Requere os dados em formato de string da Camada de Acesso a Dados.
     if(fileString == 'err'): return "Erro! Arquivo invalido." #Retorna uma mensagem de erro caso nao tenha sido possivel ler o arquivo. 
@@ -39,7 +39,7 @@ def processData(fileName):
     return processedData
 
 
-#CAMADA DE ACESSO A DADOS:
+#---CAMADA DE ACESSO A DADOS---:
 def accessData(fileName):
     #Tenta abrir o arquivo desejado, retornando 'err' caso falhe, e retornando os dados em string contidos nele para a camada superior de processamento:
     try:
@@ -50,6 +50,8 @@ def accessData(fileName):
         return 'err'
     return fileString
 
+
+#---MAIN:---
 
 #Chamada da Camada de Interface:
 userInterface()
