@@ -7,13 +7,16 @@ from re import findall
 HOST = ''   #interface padrao de comunicacao da maquina
 PORT = 5000 #identifica o port do processo na maquina
 
+activeConnections = {} #dicionario contendo as conexoes ativas (key: sock, value: address)
+inputs = [sys.stdin]   #lista contendo as entradas que serao multiplexadas pela funcao select() na main
+
 #---CAMADA DE PROCESSAMENTO DE DADOS---:
 def processData(fileName):
-    fileString = accessData(fileName) #Requere os dados em formato de string da Camada de Acesso a Dados.
+    fileString = accessData(fileName) #Requere os dados em formato de string da CAMADA DE ACESSO A DADOS.
     if(fileString == 'err'): return "Erro! Arquivo invalido." #Retorna uma mensagem de erro caso nao tenha sido possivel ler o arquivo. 
     
     N = 10      #numero de palavras a ranquear
-    words = {}  #dict de palavras
+    words = {}  #dicionario de palavras
 
     words_list = findall(r'\w+', fileString.lower()) #lista de palavras (convertidas antes para letra minuscula) do arquivo texto
 
@@ -64,46 +67,52 @@ def acceptConnection(sock):
     clientSock, addr = sock.accept()
     return clientSock, addr
 
-def respondRequests(clientSock, addr):
-    while True: #se mantem nesse loop enquanto lidar com o mesmo cliente.
-        #Espera por mensagem do lado ativo:
-        print("Aguardando nome do arquivo...")
-        fileNameBytes = clientSock.recv(2048) #bloqueia enquanto nao receber mensagem, argumento indica quantidade maxima de bytes
-        if not fileNameBytes: break #sai do loop se a mensagem recebida for vazia (cliente encerrou conexao)
-        #Converte a mensagem para string e realiza a chamada da Camada de Processamento:
-        fileName = str(fileNameBytes, encoding='utf-8')
-        outData = processData(fileName)
-        #Converte o retorno da chamada da Camada de Processamento para bytes e envia esses dados de volta para o Cliente:
-        clientSock.send(str.encode(outData))
-        print("Resposta enviada ao cliente.")
-    #Fecha o descritor de socket da conexao:
-    print("Cliente " + str(addr) + " desconectado.")
-    clientSock.close()
+def respondRequest(clientSock, addr):
+    fileNameBytes = clientSock.recv(2048)
+    if not fileNameBytes:
+        print("Cliente " + str(addr) + " desconectado.")
+        inputs.remove(clientSock) #remove o socket da lista de entradas e do dicionario de conexoes ativas
+        del activeConnections[clientSock]
+        clientSock.close() #fecha descritor de socket da conexao
+        return #sai da funcao
+    #Converte a mensagem para string e realiza a chamada da CAMADA DE PROCESSAMENTO:
+    fileName = str(fileNameBytes, encoding='utf-8')
+    outData = processData(fileName)
+    #Converte o retorno da chamada da CAMADA DE PROCESSAMENTO para bytes e envia esses dados de volta para o Cliente:
+    clientSock.send(str.encode(outData))
+    print("Resposta enviada ao cliente: " + str(addr))
         
 
 def main():
 
     sock = initializeServer()
-    print("Servidor inicializado!")
-    inputs = [sock, sys.stdin]
+    print("\nServidor inicializado! Insira \'exit\' para desligar a aplicacao.")
+    inputs.append(sock)
     #Loop principal:
     while True:
-        print("\nAguardando nova conexao...")
-        #Aceita conexao, bloqueia se nao houver pedidos de conexao:
+        print("\nAguardando requisicao ou comando...")
+        #Aceita conexao, bloqueia se nao houver pedidos de conexao, comandos no buffer sys.stdin ou requisicoes de clientes ja conectados:
         r, w, e = select.select(inputs, [], [])
         for inputToBeRead in r:
             if inputToBeRead == sock:
                 newSock, address = acceptConnection(sock)
-                print("Conectado com: " + str(address))
-                #Responde as multiplas requisicoes do cliente até ele se desconectar:
-                respondRequests(newSock, address)
+                newSock.setblocking(False) #torna o socket nao bloqueante, deixando o bloqueio a cargo da funcao select() na main
+                inputs.append(newSock) #inclui o sock do novo cliente na lista de entradas a serem observadas no select
+                activeConnections[newSock] = address #inclui o endereco desse cliente no dicionario para uso em logs
+                print("Nova conexao com " + str(address) + " estabelecida.")
             elif inputToBeRead == sys.stdin:
                 cmd = input()
                 if cmd == 'exit':
-                    #Fecha o descritor de socket principal da aplicacao servidor e termina a aplicacao
-                    print("Desligando servidor.")
-                    sock.close()
-                    sys.exit()
-        #Mantem-se no loop e busca outro Cliente para atender...
+                    if not activeConnections:
+                        #Fecha o descritor de socket principal da aplicacao servidor e termina a aplicacao
+                        print("Desligando servidor.")
+                        sock.close()
+                        sys.exit()
+                    else:
+                        print("Nao foi possivel fechar a aplicacao, aguardar termino de conexoes com clientes ativos.")
+            #No caso em que a entrada lida nao seja nem o sock do servidor, nem sys.stdin: sabemos que sera uma requisicao de sock de um cliente ja conectado:
+            else:
+                respondRequest(inputToBeRead, activeConnections[inputToBeRead])
+        #Mantem-se no loop e espera uma outra requisicao de cliente para atender ou comando do stdin...
     
 main()
