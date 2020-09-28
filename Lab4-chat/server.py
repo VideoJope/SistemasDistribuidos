@@ -1,56 +1,78 @@
 import socket
 import select
 import sys
-import multiprocessing
-from operator import itemgetter
-from re import findall
+import threading
 
 HOST = ''   #interface padrao de comunicacao da maquina
 PORT = 5000 #identifica o port do processo na maquina
 
-#---CAMADA DE PROCESSAMENTO DE DADOS---:
-def dataProcessingLayer(fileName):
-    fileString = dataAccessLayer(fileName) #Requere os dados em formato de string da CAMADA DE ACESSO A DADOS.
-    if(fileString == 'err'): return "Erro! Arquivo invalido." #Retorna uma mensagem de erro caso nao tenha sido possivel ler o arquivo. 
-    
-    N = 10      #numero de palavras a ranquear
-    words = {}  #dicionario de palavras
+#TODO:
+#>TERMINAR DE IMPLEMENTAR O PROCESSAMNETO DE REQUERIMENTOS DOS CLIENTES
+#>IMPLEMENTAR O RESTO DA INTERFACE DE ADMIN
 
-    words_list = findall(r'\w+', fileString.lower()) #lista de palavras (convertidas antes para letra minuscula) do arquivo texto
+activeUsers = {}        #dict contendo os usuarios logados (key: username, value: clientSocket)
+lock = threading.Lock() #lock para acesso ao dicionario
 
-    #Armazena no dicionario as palavras e seu numero de ocorrencias:
-    for word in words_list: 
-        words[word] = words.get(word, 0) + 1
+class Validation:
 
-    #Realiza o sort e armazena o resultado na lista 'top_words':
-    top_words = sorted(words.items(), key=itemgetter(1), reverse=True)[:N]
+    def login(newSocket, newUsername):
+        lock.acquire()
+        for s in activeUsers.values():
+            if s == newSocket:
+                lock.release()
+                return "Voce ja esta logado!"
+        if not newUsername in activeUsers:
+                activeUsers[newUsername] = newSocket
+                lock.release()
+                return "Login realizado com sucesso! Voce esta pronto para utilizar o chat."
+        else:
+            lock.release()
+            return "Este nome ja esta em uso por outro usuario no momento. Tente novamente com outro nome."
 
-    #Armazena na string 'processedData' os dados ja processados e formatados para retornar a camada superior de interface para impressao:
-    processedData = "\nRanking de Ocorrencia de Palavras:\n"
-    rank = 1
-    for word, frequency in top_words:
-        processedData = processedData + ("Rank %d: %s\t (%dx)\n" % (rank, word, frequency))
-        rank += 1
-    print("Dados do arquivo processados.")
-    return processedData
+    def logout(clientSocket):
+        lock.acquire()
+        for username in activeUsers:
+            if activeUsers[username] == clientSocket:
+                activeUsers.pop(username)
+                lock.release()
+                return "Voce foi deslogado com sucesso."
+        lock.release()
+        return "Voce nao esta logado."
 
+    def isUsernameConnected(username):
+        lock.acquire()
+        out = username in activeUsers
+        lock.release()
+        return out
 
-#---CAMADA DE ACESSO A DADOS---:
-def dataAccessLayer(fileName):
-    #Tenta abrir o arquivo desejado, retornando 'err' caso falhe, e retornando os dados em string contidos nele para a camada superior de processamento:
-    try:
-        print("Buscando arquivo: " + fileName)
-        fileObject = open(fileName, 'r')
-        fileString = fileObject.read()
-        fileObject.close()
-    except:
-        print("Arquivo '" + fileName + "' não encontrado.")
-        return 'err'
-    print("Arquivo '" + fileName + "' encontrado.")
-    return fileString
+    def isSocketConnected(socket):
+        lock.acquire()
+        for s in activeUsers.values():
+            if s == socket:
+                lock.release()
+                return True
+        lock.release()
+        return False
 
+    def getSocket(username):
+        lock.acquire()
+        if username in activeUsers:
+            socket = activeUsers[username]
+            lock.release()
+            return socket
+        else:
+            lock.release()
+            return False
 
-#---MAIN & FUNCOES---:
+    def getUsername(socket):
+        lock.acquire()
+        for username in activeUsers:
+            if activeUsers[username] == socket:
+                lock.release()
+                return username
+        lock.release()
+        return False
+
 
 class ServerCommunication:
 
@@ -67,6 +89,59 @@ class ServerCommunication:
         clientSocket, addr = self.serverSocket.accept()
         return clientSocket, addr
 
+
+    def handleRequests(self, clientSocket, addr):
+        while True:
+            request = self.receiveFrom(clientSocket)
+            if not request:
+                print("Cliente " + str(addr) + " desconectado.\n")
+                Validation.logout(clientSocket) #remove o cliente do dicionario global de clientes ativos
+                clientSocket.close() #fecha descritor de socket da conexao e sai do loop pelo return
+                return
+            print("Requisicao do cliente " + str(addr) + " recebida.")
+            self.processRequest(clientSocket, addr, request)
+
+
+    def processRequest(self, clientSocket, addr, request):
+        loginCommands = {'login', 'Login'}
+        logoutCommands = {'logout', 'Logout'}
+
+        splitRequest = request.split(' ', 1)
+
+        #Requisicao de Login:
+        if(splitRequest[0] in loginCommands):
+            validationMessage = Validation.login(clientSocket, request.split(' ')[1])
+            self.sendTo(validationMessage, clientSocket)
+            print(activeUsers)
+
+        #Requisicao de Logout:
+        elif(splitRequest[0] in logoutCommands):
+            validationMessage = Validation.logout(clientSocket)
+            self.sendTo(validationMessage, clientSocket)
+            print(activeUsers)
+
+        #Requisicao de mensagem a outro usuário:
+        elif(splitRequest[0][0] == '@'):
+            if not Validation.isSocketConnected(clientSocket):
+                self.sendTo("ERRO - Voce deve estar logado para enviar mensagens.", clientSocket)
+                return
+            targetSocket = Validation.getSocket(splitRequest[0][1:])
+            if targetSocket:
+                try:
+                    message = splitRequest[1].strip()
+                    if len(message) > 0:
+                        self.sendTo("[" + Validation.getUsername(clientSocket) + "]: " + message, targetSocket)
+                    else:
+                        self.sendTo("ERRO - Mensagem a ser enviada nao pode conter somente espacos em branco.", clientSocket)
+                except IndexError:
+                    self.sendTo("ERRO - Mensagem a ser enviada deve estar no formato: @user message", clientSocket)
+            else:
+                self.sendTo("ERRO - Nao ha usuarios conectados com esse nome no momento.", clientSocket)
+        
+
+
+
+
     def receiveFrom(self, clientSocket):
         return str(clientSocket.recv(2048), encoding = 'utf-8')
 
@@ -75,7 +150,6 @@ class ServerCommunication:
 
 
 class ServerInterface:
-
     def __init__(self, hostIP, hostPort):
         self.main(hostIP, hostPort)
 
@@ -89,7 +163,7 @@ class ServerInterface:
             r, w, e = select.select(inputs, [], [])
             for inputToBeRead in r:
                 if inputToBeRead == serverSocket:
-                    self.initiateClientSubprocess(comm)
+                    self.initiateClientThread(comm)
                 elif inputToBeRead == sys.stdin:
                     cmd = input()
                     if cmd == 'exit':
@@ -97,29 +171,16 @@ class ServerInterface:
                         print("Desligando o servidor.")
                         serverSocket.close()
                         sys.exit()
+                    if cmd == 'printa':
+                        print(activeUsers)
             
 
-    def initiateClientSubprocess(self, comm):
+    def initiateClientThread(self, comm):
         clientSocket, address = comm.acceptConnection()
         print("Nova conexao com " + str(address) + " estabelecida.\n")
-        #Inicia um novo processo para responder requisicoes do novo cliente com a funcao clientSubprocess, recebendo como argumentos clientSocket e address:
-        clientProcess = multiprocessing.Process(target = self.clientSubprocess, args = (comm, clientSocket, address))
-        clientProcess.start()
+        #Inicia uma nova thread para responder requisicoes do novo cliente com a funcao handleRequests, recebendo como argumentos clientSocket e address:
+        clientThread = threading.Thread(target = comm.handleRequests, args = (clientSocket, address))
+        clientThread.start()
 
-
-    def clientSubprocess(self, comm, clientSocket, addr):
-        while True:
-            request = comm.receiveFrom(clientSocket)
-            if not request:
-                print("Cliente " + str(addr) + " desconectado.\n")
-                clientSocket.close() #fecha descritor de socket da conexao
-                return #sai da funcao
-            print("Requisicao do cliente " + str(addr) + " recebida.")
-            #Realiza a chamada da CAMADA DE PROCESSAMENTO:
-            outData = dataProcessingLayer(request)
-            #Envia esses dados de volta para o Cliente:
-            comm.sendTo(outData, clientSocket)
-            print("Resposta enviada ao cliente.\n")
-        
     
 ServerInterface(HOST, PORT)
