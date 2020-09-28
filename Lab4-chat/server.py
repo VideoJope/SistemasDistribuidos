@@ -52,67 +52,74 @@ def dataAccessLayer(fileName):
 
 #---MAIN & FUNCOES---:
 
-def initializeServer():
-    #Cria o descritor de socket:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #argumento indica comunicacao via internet e TCP
-    #Vincula o endereco e porta:
-    sock.bind((HOST, PORT))
-    #Se posiciona em modo de espera:
-    sock.listen(5)          #argumento indica quantidade de conexoes pendentes permitidas
-    sock.setblocking(False) #torna o socket nao bloqueante, deixando o bloqueio a cargo da funcao select() na main
-    return sock
+class ServerCommunication:
 
-def acceptConnection(sock):
-    clientSock, addr = sock.accept()
-    return clientSock, addr
+    def __init__(self, hostIP, hostPort):
+        #Cria o descritor de socket:
+        self.serverSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM) #argumento indica comunicacao via internet e TCP
+        #Vincula o endereco e porta:
+        self.serverSocket.bind((hostIP, hostPort))
+        #Se posiciona em modo de espera:
+        self.serverSocket.listen(10)         #argumento indica quantidade de conexoes pendentes permitidas
+        self.serverSocket.setblocking(False) #torna o socket nao bloqueante, deixando o bloqueio a cargo da funcao select() na main
 
-def respondRequests(clientSock, addr):
-    #clientSock.send(str.encode("TESTE")) #DELETA DEPOIS
-    while True:
-        fileNameBytes = clientSock.recv(2048)
-        if not fileNameBytes:
-            print("Cliente " + str(addr) + " desconectado.\n")
-            clientSock.close() #fecha descritor de socket da conexao
-            return #sai da funcao
-        print("Requisicao do cliente " + str(addr) + " recebida.")
-        #Converte a mensagem para string e realiza a chamada da CAMADA DE PROCESSAMENTO:
-        fileName = str(fileNameBytes, encoding='utf-8')
-        outData = dataProcessingLayer(fileName)
-        #Converte o retorno da chamada da CAMADA DE PROCESSAMENTO para bytes e envia esses dados de volta para o Cliente:
-        clientSock.send(str.encode(outData))
-        print("Resposta enviada ao cliente.\n")
-        
+    def acceptConnection(self):
+        clientSocket, addr = self.serverSocket.accept()
+        return clientSocket, addr
 
-def main():
+    def receiveFrom(self, clientSocket):
+        return str(clientSocket.recv(2048), encoding = 'utf-8')
 
-    sock = initializeServer()
-    print("\nServidor inicializado! Insira o comando \'exit\' para nao aceitar novas conexoes e terminar a aplicacao.")
-    print("Aguardando conexoes...\n")
-    inputs = [sys.stdin, sock] #lista das entradas que serao multiplexadas pela funcao select()
-    clientProcessesList = [] #lista dos processos criados ao longo da execucao para atender clientes
+    def sendTo(self, message, clientSocket):
+        clientSocket.send(str.encode(message))
 
-    #Loop principal:
-    while True:
+
+class ServerInterface:
+
+    def __init__(self, hostIP, hostPort):
+        self.main(hostIP, hostPort)
+
+    def main(self, hostIP, hostPort):
+        comm = ServerCommunication(hostIP, hostPort)
+        serverSocket = comm.serverSocket
+        inputs = [sys.stdin, serverSocket]
+
+        while True:
         #Aceita conexao, bloqueia se nao houver pedidos de conexao, comandos no buffer sys.stdin ou requisicoes de clientes ja conectados:
-        r, w, e = select.select(inputs, [], [])
-        for inputToBeRead in r:
-            if inputToBeRead == sock:
-                clientSock, address = acceptConnection(sock)
-                print("Nova conexao com " + str(address) + " estabelecida.\n")
-                #Inicia um novo processo para responder requisicoes do novo cliente com a funcao respondRequests, recebendo como argumentos clientSock e address:
-                clientProcess = multiprocessing.Process(target = respondRequests, args = (clientSock, address))
-                clientProcess.start()
-                clientProcessesList.append(clientProcess)
-            elif inputToBeRead == sys.stdin:
-                cmd = input()
-                if cmd == 'exit':
-                    print("O servidor nao ira responder a novos clientes e desligara automaticamente apos atender clientes ativos em sessao...\n")
-                    for c in clientProcessesList:
-                        c.join()
-                    #Fecha o descritor de socket principal da aplicacao servidor e termina a aplicacao:
-                    print("Nenhum cliente ativo pendente.\nDesligando o servidor.")
-                    sock.close()
-                    sys.exit()
-        #Mantem-se no loop e espera uma outra requisicao de cliente para atender ou comando do console para tratar...
+            r, w, e = select.select(inputs, [], [])
+            for inputToBeRead in r:
+                if inputToBeRead == serverSocket:
+                    self.initiateClientSubprocess(comm)
+                elif inputToBeRead == sys.stdin:
+                    cmd = input()
+                    if cmd == 'exit':
+                        #Fecha o descritor de socket principal da aplicacao servidor e termina a aplicacao:
+                        print("Desligando o servidor.")
+                        serverSocket.close()
+                        sys.exit()
+            
+
+    def initiateClientSubprocess(self, comm):
+        clientSocket, address = comm.acceptConnection()
+        print("Nova conexao com " + str(address) + " estabelecida.\n")
+        #Inicia um novo processo para responder requisicoes do novo cliente com a funcao clientSubprocess, recebendo como argumentos clientSocket e address:
+        clientProcess = multiprocessing.Process(target = self.clientSubprocess, args = (comm, clientSocket, address))
+        clientProcess.start()
+
+
+    def clientSubprocess(self, comm, clientSocket, addr):
+        while True:
+            request = comm.receiveFrom(clientSocket)
+            if not request:
+                print("Cliente " + str(addr) + " desconectado.\n")
+                clientSocket.close() #fecha descritor de socket da conexao
+                return #sai da funcao
+            print("Requisicao do cliente " + str(addr) + " recebida.")
+            #Realiza a chamada da CAMADA DE PROCESSAMENTO:
+            outData = dataProcessingLayer(request)
+            #Envia esses dados de volta para o Cliente:
+            comm.sendTo(outData, clientSocket)
+            print("Resposta enviada ao cliente.\n")
+        
     
-main()
+ServerInterface(HOST, PORT)

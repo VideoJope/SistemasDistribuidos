@@ -6,7 +6,7 @@ HOST = 'localhost' #configuracao de ip da aplicacao servidor
 PORT = 5000        #identifica o port do processo na maquina
 
 
-class Communication:
+class ClientCommunication:
     def __init__(self):
         self.clientSocket = socket.socket()
 
@@ -28,7 +28,7 @@ class Communication:
         return str(self.clientSocket.recv(2048), encoding = 'utf-8')
 
 
-class Interface:
+class ClientInterface:
 
     exitCommands = {"exit", "Exit", "logout", "Logout", "quit", "Quit"}
 
@@ -37,7 +37,7 @@ class Interface:
 
 
     def main(self, hostIP, hostPort):
-        comm = Communication()
+        comm = ClientCommunication()
         clientSocket = comm.clientSocket
         inputs = [sys.stdin, clientSocket]
 
@@ -80,4 +80,4 @@ class Interface:
             print(message)
 
 
-Interface(HOST, PORT)
+ClientInterface(HOST, PORT)
