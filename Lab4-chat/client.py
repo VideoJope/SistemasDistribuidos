@@ -30,7 +30,7 @@ class ClientCommunication:
 
 class ClientInterface:
 
-    exitCommands = {"exit", "Exit", "quit", "Quit"}
+    exitCommands = {'exit', 'Exit', 'quit', 'Quit', 'disconnect', 'Disconnect', '!exit', '!Exit', '!quit', '!Quit', '!disconnect', '!Disconnect'}
 
     def __init__(self, hostIP, hostPort):
         self.main(hostIP, hostPort)
