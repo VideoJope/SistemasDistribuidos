@@ -3,29 +3,26 @@ import select
 import sys
 import threading
 
-HOST = ''   #interface padrao de comunicacao da maquina
-PORT = 5000 #identifica o port do processo na maquina
+HOST = ''                   #interface padrao de comunicacao da maquina
+PORT = 5000                 #identifica o port do processo na maquina
+MAXPENDINGCONNECTIONS = 10  #indica quantidade de conexoes pendentes permitidas
 
-#TODO:
-#>IMPLEMENTAR O REQUERIMENTO DE !HELP DOS CLIENTES/ADMIN
-#>IMPLEMENTAR A MENSAGEM INICIAL PARA OS CLIENTES/ADMIN
-
-activeUsers = {}        #dict contendo os usuarios logados (key: clientSocket, value: username)
-lock = threading.Lock() #lock para acesso ao dicionario
+#Dict contendo os usuarios conectados (key: clientSocket, value: username):
+connectedUsers = {}     #usuarios conectados mas nao logados sao identificados pelo username ''
+lock = threading.Lock() #lock para acesso concorrente ao dicionario
 
 class RequestValidation:
 
-
-    def newConnection(self, newSocket):
+    def addNewConnection(self, newSocket):
         lock.acquire()
-        activeUsers[newSocket] = ''
+        connectedUsers[newSocket] = ''
         lock.release()
         return True
 
     def disconnect(self, clientSocket):
         lock.acquire()
-        if clientSocket in activeUsers:
-            activeUsers.pop(clientSocket)
+        if clientSocket in connectedUsers:
+            connectedUsers.pop(clientSocket)
             lock.release()
             return True
         else:
@@ -34,21 +31,21 @@ class RequestValidation:
 
     def login(self, clientSocket, newUsername):
         lock.acquire()
-        if activeUsers[clientSocket] != '':
+        if connectedUsers[clientSocket] != '':
             lock.release()
             return "Voce ja esta logado!"
-        elif newUsername in activeUsers.values():
+        elif newUsername in connectedUsers.values():
             lock.release()
             return "Este nome ja esta em uso por outro usuario no momento. Tente novamente com outro nome."
         else:
-            activeUsers[clientSocket] = newUsername
+            connectedUsers[clientSocket] = newUsername
             lock.release()
             return "Login realizado com sucesso! Voce esta pronto para utilizar o chat."
 
     def logout(self, clientSocket):
         lock.acquire()
-        if clientSocket in activeUsers:
-            activeUsers[clientSocket] = ''
+        if clientSocket in connectedUsers:
+            connectedUsers[clientSocket] = ''
             lock.release()
             return "Voce foi deslogado com sucesso."
         lock.release()
@@ -57,13 +54,13 @@ class RequestValidation:
     def isUsernameAvailable(self, username):
         if username == '': return False
         lock.acquire()
-        outBool = username in activeUsers.values()
+        outBool = username in connectedUsers.values()
         lock.release()
         return outBool
 
     def isSocketAvailable(self, socket):
         lock.acquire()
-        if socket in activeUsers and activeUsers[socket] != '':
+        if socket in connectedUsers and connectedUsers[socket] != '':
             lock.release()
             return True
         lock.release()
@@ -72,8 +69,8 @@ class RequestValidation:
     def getSocket(self, username):
         if username == '': return False
         lock.acquire()
-        for socket in activeUsers:
-            if activeUsers[socket] == username:
+        for socket in connectedUsers:
+            if connectedUsers[socket] == username:
                 lock.release()
                 return socket
         lock.release()
@@ -82,15 +79,15 @@ class RequestValidation:
     def getSocketList(self):
         out = []
         lock.acquire()
-        for socket in activeUsers:
+        for socket in connectedUsers:
             out.append(socket)
         lock.release()
         return out
 
     def getUsername(self, socket):
         lock.acquire()
-        if socket in activeUsers:
-            out = activeUsers[socket]
+        if socket in connectedUsers:
+            out = connectedUsers[socket]
             lock.release()
             return out
         lock.release()
@@ -99,7 +96,7 @@ class RequestValidation:
     def displayAvailableUsers(self):
         out = "\nUsuarios Disponiveis:\n"
         lock.acquire()
-        for username in activeUsers.values():
+        for username in connectedUsers.values():
             if len(username) > 0:
                 out = out + '>' + username + '\n'
         lock.release()
@@ -110,12 +107,14 @@ class RequestValidation:
     def displayConnectedUsers(self):
         out = "\nUsuarios Conectados:\n"
         lock.acquire()
-        for socket in activeUsers:
-            username = activeUsers[socket]
+        for socket in connectedUsers:
+            username = connectedUsers[socket]
             if username != '':
                 username = " -> " + username
             out = out + str(socket.getpeername()) + username + '\n'
         lock.release()
+        if out == "\nUsuarios Conectados:\n":
+            out = "\nNenhum Usuario Conectado.\n"
         return out
 
 
@@ -127,16 +126,17 @@ class ServerCommunication:
         #Vincula o endereco e porta:
         self.serverSocket.bind((hostIP, hostPort))
         #Se posiciona em modo de espera:
-        self.serverSocket.listen(10)         #argumento indica quantidade de conexoes pendentes permitidas
+        self.serverSocket.listen(MAXPENDINGCONNECTIONS)
         self.serverSocket.setblocking(False) #torna o socket nao bloqueante, deixando o bloqueio a cargo da funcao select() na main
 
     def acceptConnection(self):
         clientSocket, addr = self.serverSocket.accept()
-        RequestValidation().newConnection(clientSocket)
+        RequestValidation().addNewConnection(clientSocket)
         return clientSocket, addr
 
 
     def handleRequests(self, clientSocket, addr):
+        self.sendTo("\nBem vindo ao Servidor de Chat! Digite 'help' para ver a lista de comandos disponiveis.\n", clientSocket)
         while True:
             request = self.receiveFrom(clientSocket)
             if not request:
@@ -144,7 +144,6 @@ class ServerCommunication:
                 RequestValidation().disconnect(clientSocket) #remove o cliente do dicionario global de clientes ativos
                 clientSocket.close() #fecha descritor de socket da conexao e sai do loop pelo return
                 return
-            #print("Requisicao do cliente " + str(addr) + " recebida.")
             self.processRequest(clientSocket, request)
 
 
@@ -159,10 +158,18 @@ class ServerCommunication:
         splitRequest = request.split(' ', 1)
 
         #Requisicao de Help:
-        #TODO
+        if splitRequest[0] in helpCommands:
+            out = "\nComandos Disponiveis:\n"
+            out = out + "help\n  Mostra esta mensagem contendo os comandos disponiveis.\n"
+            out = out + "list\n  Mostra a lista de usuarios logados disponiveis para chat.\n"
+            out = out + "login username\n  Se torna disponivel para chat com outros usuarios. O nome de usuario 'username' escolhido deve ser unico.\n"
+            out = out + "logout\n  Se torna indisponivel para chat com outros usuarios. Deve estar logado.\n"
+            out = out + "@username message\n  Envia ao usuario de nome 'username' a mensagem 'message'. Deve estar logado.\n"
+            out = out + "exit\n  Desconecta do servidor, fechando a aplicacao.\n"
+            self.sendTo(out, clientSocket)
 
         #Requisicao de Login:
-        if(splitRequest[0] in loginCommands):
+        elif(splitRequest[0] in loginCommands):
             RequestValidationMessage = validate.login(clientSocket, request.split(' ')[1])
             self.sendTo(RequestValidationMessage, clientSocket)
 
@@ -222,6 +229,9 @@ class ServerInterface:
         comm = ServerCommunication(hostIP, hostPort)
         inputs = [sys.stdin, comm.serverSocket]
 
+        print("\n----Servidor de Chat Online----\n Pronto para receber conexoes.\n")
+        print("Digite 'help' para ver a lista de comandos disponiveis.\n")
+
         while True:
         #Aceita conexao, bloqueia se nao houver pedidos de conexao, comandos no buffer sys.stdin ou requisicoes de clientes ja conectados:
             r, w, e = select.select(inputs, [], [])
@@ -252,10 +262,17 @@ class ServerInterface:
         splitRequest = request.split(' ', 1)
 
         #Requisicao de Help:
-        #TODO
+        if splitRequest[0] in helpCommands:
+            print("\nComandos Disponiveis ao Administrador:")
+            print("help\n  Mostra esta mensagem contendo os comandos disponiveis.")
+            print("list\n  Mostra a lista de todos clientes conectados no servidor e seus nomes de usuario caso estejam logados.")
+            print("broadcast message\n  Envia a todos clientes conectados a mensagem 'message'.")
+            print("@username message\n  Envia ao usuario de nome 'username' a mensagem 'message'. O usuario nao pode responder a mensagens de administrador.")
+            print("kick username\n  Desloga o usuario de nome 'username' do servico de chat. Isso nao desconecta o usuario do servidor.")
+            print("exit\n  Desconecta todos os clientes e finaliza a aplicacao servidor.\n")
 
         #Requisicao de Saida:
-        if splitRequest[0] in exitCommands:
+        elif splitRequest[0] in exitCommands:
             print("Desligando o servidor.")
             comm.serverSocket.close()
             comm.broadcast('$QUIT')
