@@ -7,10 +7,9 @@ HOST = ''                   #interface padrao de comunicacao da maquina
 PORT = 5000                 #identifica o port do processo na maquina
 MAXPENDINGCONNECTIONS = 10  #indica quantidade de conexoes pendentes permitidas
 
-
 #Dicionario contendo os usuarios conectados (key: clientSocket, value: username):
 connectedUsers = {}     #usuarios conectados mas nao logados sao identificados pelo username ''
-lock = threading.Lock() #lock para acesso concorrente ao dicionario
+lock = threading.Lock() #lock para acesso compartilhado ao dicionario
 
 #---CAMADA DE VALIDACAO---:
 class RequestValidation:
@@ -107,7 +106,7 @@ class RequestValidation:
             out = "\nNenhum Usuario Disponivel.\n"
         return out
 
-    #Retorna a lista pronta para impressao de usuarios conectados, incluindo aqueles que nao estiverem logados (disponiveis para troca de mensagens):
+    #Retorna a lista pronta para impressao de usuarios conectados, incluindo aqueles que nao estiverem logados (indisponiveis para troca de mensagens):
     def displayConnectedUsers(self):
         out = "\nUsuarios Conectados:\n"
         lock.acquire()
@@ -120,6 +119,7 @@ class RequestValidation:
         if out == "\nUsuarios Conectados:\n":
             out = "\nNenhum Usuario Conectado.\n"
         return out
+
 
 
 #---CAMADA DE COMUNICACAO DO SERVIDOR---
@@ -136,11 +136,13 @@ class ServerCommunication:
         #Instancia a Camada de Validacao:
         self.validate = RequestValidation()
 
+
     #Aceita uma nova conexao, incluindo o descritor de socket no dicionario e o retornando junto com o endereco do cliente:
     def acceptConnection(self):
         clientSocket, addr = self.serverSocket.accept()
         self.validate.addNewConnection(clientSocket)
         return clientSocket, addr
+
 
     #Metodo que cada Thread associada a um cliente ira chamar para responder a requisicoes:
     def handleRequests(self, clientSocket, addr):
@@ -152,10 +154,13 @@ class ServerCommunication:
                 self.validate.removeConnection(clientSocket) #remove o cliente do dicionario global de clientes ativos
                 clientSocket.close() #fecha descritor de socket da conexao e sai do loop pelo return
                 return
-            self.processRequest(clientSocket, request)
+            self.processRequest(clientSocket, request) #processa a requisicao
+
 
     #Processamento de requisicoes de clientes:
     def processRequest(self, clientSocket, request):
+
+        #Listas de Comandos:
         loginCommands = {'login', 'Login', '!login', '!Login'}
         logoutCommands = {'logout', 'Logout', '!logout', '!Logout'}
         listUsersCommands = {'list', 'List', 'users', 'Users', 'lista', '!Lista', '!list', '!List', '!users', '!Users', '!lista', '!Lista', 'listusers', 'Listusers', '!listusers', '!Listusers'}
@@ -213,28 +218,64 @@ class ServerCommunication:
         #Requisicao para Mostrar Lista de Usuarios Disponiveis:
         elif(splitRequest[0] in listUsersCommands):
             userList = self.validate.displayAvailableUsers()
-            self.sendTo(userList, clientSocket)
-        
+            self.sendTo(userList, clientSocket)       
+
         #Requisicao Invalida:
         else:
             self.sendTo("ERRO - Comando invalido. Digite 'help' para uma lista de comandos.", clientSocket)
+
 
     #Envia a mensagem passada como parametro para todos usuarios conectados no servidor:
     def broadcast(self, message):
         for s in connectedUsers:
             self.sendTo(message, s)
 
+
+    #Envia a mensagem (passada por parametro como string) ao socket do cliente apos adequa-la ao protocolo estabelecido:
+    def sendTo(self, messageString, clientSocket):
+        messageLength = len(messageString)
+        if messageLength > 9999:
+            messageString = messageString[:9999] #caso a mensagem ultrapasse o limite de 9999 caracteres, remove os caracteres extras
+            messageLength = 9999
+        #Header no formato "XXXX:", com os 4 Xs sendo digitos representando o tamanho da mensagem que segue os dois pontos:
+        header = '0' * (4 - len(str(messageLength))) + str(messageLength) + ':'
+        messageString = header + messageString #concatena o header com a mensagem a ser enviada
+        message = messageString.encode('utf-8')
+        return clientSocket.sendall(message)
+
+
     #Recebe uma mensagem do socket passado como parametro, a retornando no formato de string:
     def receiveFrom(self, clientSocket):
-        return str(clientSocket.recv(2048), encoding = 'utf-8')
+        #Recebe o Header contendo o tamanho da Mensagem a ser lida:
+        numberBytesRead = 0
+        dataChunks = []
+        while numberBytesRead < 5:
+            data = clientSocket.recv(5 - numberBytesRead)
+            if not data: return False
+            dataChunks.append(data)
+            numberBytesRead = numberBytesRead + len(data)
+        header = str(b''.join(dataChunks), encoding = 'utf-8')
+        if(header[-1] != ':'): return False
 
-    #Envia a mensagem (no formato string) ao socket passado como parametro:
-    def sendTo(self, message, clientSocket):
-        clientSocket.send(str.encode(message))
+        messageLength = int(header[:4]) #tamanho da mensagem, obtido apartir do header
+
+        #Recebe a Mensagem:
+        numberBytesRead = 0
+        dataChunks = []
+        while numberBytesRead < messageLength:
+            data = clientSocket.recv(min(messageLength - numberBytesRead, 1024))
+            if not data: return False
+            dataChunks.append(data)
+            numberBytesRead = numberBytesRead + len(data)
+        message = str(b''.join(dataChunks), encoding = 'utf-8')
+
+        return message
 
 
-#---CAMADA DA INTERFACE DE ADMINISTRADOR---
+
+#---CAMADA DE INTERFACE DO ADMINISTRADOR---
 class ServerInterface:
+
     def __init__(self, hostIP, hostPort):
         #Instancia a Camada de Comunicacao:
         self.comm = ServerCommunication(hostIP, hostPort)
