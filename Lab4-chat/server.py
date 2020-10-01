@@ -7,19 +7,23 @@ HOST = ''                   #interface padrao de comunicacao da maquina
 PORT = 5000                 #identifica o port do processo na maquina
 MAXPENDINGCONNECTIONS = 10  #indica quantidade de conexoes pendentes permitidas
 
-#Dict contendo os usuarios conectados (key: clientSocket, value: username):
+
+#Dicionario contendo os usuarios conectados (key: clientSocket, value: username):
 connectedUsers = {}     #usuarios conectados mas nao logados sao identificados pelo username ''
 lock = threading.Lock() #lock para acesso concorrente ao dicionario
 
+#---CAMADA DE VALIDACAO---:
 class RequestValidation:
 
+    #Adiciona o usuario no dicionario, indicando que ele esta deslogado:
     def addNewConnection(self, newSocket):
         lock.acquire()
         connectedUsers[newSocket] = ''
         lock.release()
         return True
 
-    def disconnect(self, clientSocket):
+    #Remove o usuario do dicionario:
+    def removeConnection(self, clientSocket):
         lock.acquire()
         if clientSocket in connectedUsers:
             connectedUsers.pop(clientSocket)
@@ -29,19 +33,21 @@ class RequestValidation:
             lock.release()
             return False
 
+    #Loga o usuario associado ao descritor de socket clientSocket com nome de usuario newUsername, modificando o dicionario de acordo:
     def login(self, clientSocket, newUsername):
         lock.acquire()
         if connectedUsers[clientSocket] != '':
             lock.release()
-            return "Voce ja esta logado!"
+            return "ERRO - Voce ja esta logado!"
         elif newUsername in connectedUsers.values():
             lock.release()
-            return "Este nome ja esta em uso por outro usuario no momento. Tente novamente com outro nome."
+            return "ERRO - Este nome ja esta em uso por outro usuario no momento. Tente novamente com outro nome."
         else:
             connectedUsers[clientSocket] = newUsername
             lock.release()
-            return "Login realizado com sucesso! Voce esta pronto para utilizar o chat."
+            return "Login realizado com sucesso! Voce esta pronto para utilizar o chat.\n"
 
+    #Desloga o usuario associado ao descritor de socket passado como parametro, modificando o dicionario de acordo:
     def logout(self, clientSocket):
         lock.acquire()
         if clientSocket in connectedUsers:
@@ -49,8 +55,9 @@ class RequestValidation:
             lock.release()
             return "Voce foi deslogado com sucesso."
         lock.release()
-        return "Voce nao esta logado."
+        return "ERRO - Voce nao esta logado."
 
+    #Retorna True caso o usuario associado ao username passado como parametro esteja logado (disponivel para mensagens):
     def isUsernameAvailable(self, username):
         if username == '': return False
         lock.acquire()
@@ -58,6 +65,7 @@ class RequestValidation:
         lock.release()
         return outBool
 
+    #Retorna True caso o usuario associado ao descritor de socket passado como parametro esteja logado (disponivel para mensagens):
     def isSocketAvailable(self, socket):
         lock.acquire()
         if socket in connectedUsers and connectedUsers[socket] != '':
@@ -66,6 +74,7 @@ class RequestValidation:
         lock.release()
         return False
 
+    #Retorna o descritor de socket de um cliente logado dado seu username (ou False caso nao tenha nenhum usuario logado com esse nome):
     def getSocket(self, username):
         if username == '': return False
         lock.acquire()
@@ -76,14 +85,7 @@ class RequestValidation:
         lock.release()
         return False
 
-    def getSocketList(self):
-        out = []
-        lock.acquire()
-        for socket in connectedUsers:
-            out.append(socket)
-        lock.release()
-        return out
-
+    #Retorna o username de um cliente dado seu descritor de socket (ou False caso o descritor de socket nao esteja presente no dicionario):
     def getUsername(self, socket):
         lock.acquire()
         if socket in connectedUsers:
@@ -93,6 +95,7 @@ class RequestValidation:
         lock.release()
         return False
 
+    #Retorna a lista pronta para impressao de usuarios logados (disponiveis para troca de mensagens):
     def displayAvailableUsers(self):
         out = "\nUsuarios Disponiveis:\n"
         lock.acquire()
@@ -104,6 +107,7 @@ class RequestValidation:
             out = "\nNenhum Usuario Disponivel.\n"
         return out
 
+    #Retorna a lista pronta para impressao de usuarios conectados, incluindo aqueles que nao estiverem logados (disponiveis para troca de mensagens):
     def displayConnectedUsers(self):
         out = "\nUsuarios Conectados:\n"
         lock.acquire()
@@ -118,6 +122,7 @@ class RequestValidation:
         return out
 
 
+#---CAMADA DE COMUNICACAO DO SERVIDOR---
 class ServerCommunication:
 
     def __init__(self, hostIP, hostPort):
@@ -127,34 +132,36 @@ class ServerCommunication:
         self.serverSocket.bind((hostIP, hostPort))
         #Se posiciona em modo de espera:
         self.serverSocket.listen(MAXPENDINGCONNECTIONS)
-        self.serverSocket.setblocking(False) #torna o socket nao bloqueante, deixando o bloqueio a cargo da funcao select() na main
+        self.serverSocket.setblocking(False) #torna o socket nao bloqueante, deixando o bloqueio a cargo da funcao select() na main da camada de interface do admnistrador
+        #Instancia a Camada de Validacao:
+        self.validate = RequestValidation()
 
+    #Aceita uma nova conexao, incluindo o descritor de socket no dicionario e o retornando junto com o endereco do cliente:
     def acceptConnection(self):
         clientSocket, addr = self.serverSocket.accept()
-        RequestValidation().addNewConnection(clientSocket)
+        self.validate.addNewConnection(clientSocket)
         return clientSocket, addr
 
-
+    #Metodo que cada Thread associada a um cliente ira chamar para responder a requisicoes:
     def handleRequests(self, clientSocket, addr):
         self.sendTo("\nBem vindo ao Servidor de Chat! Digite 'help' para ver a lista de comandos disponiveis.\n", clientSocket)
         while True:
             request = self.receiveFrom(clientSocket)
             if not request:
                 print("Cliente " + str(addr) + " desconectado.\n")
-                RequestValidation().disconnect(clientSocket) #remove o cliente do dicionario global de clientes ativos
+                self.validate.removeConnection(clientSocket) #remove o cliente do dicionario global de clientes ativos
                 clientSocket.close() #fecha descritor de socket da conexao e sai do loop pelo return
                 return
             self.processRequest(clientSocket, request)
 
-
+    #Processamento de requisicoes de clientes:
     def processRequest(self, clientSocket, request):
         loginCommands = {'login', 'Login', '!login', '!Login'}
         logoutCommands = {'logout', 'Logout', '!logout', '!Logout'}
         listUsersCommands = {'list', 'List', 'users', 'Users', 'lista', '!Lista', '!list', '!List', '!users', '!Users', '!lista', '!Lista', 'listusers', 'Listusers', '!listusers', '!Listusers'}
         helpCommands = {'help', 'Help', '!help', '!Help'}
 
-        validate = RequestValidation()
-
+        #Separa o request em uma lista de 2 strings no primeiro espaco encontrado:
         splitRequest = request.split(' ', 1)
 
         #Requisicao de Help:
@@ -170,29 +177,32 @@ class ServerCommunication:
 
         #Requisicao de Login:
         elif(splitRequest[0] in loginCommands):
-            RequestValidationMessage = validate.login(clientSocket, request.split(' ')[1])
-            self.sendTo(RequestValidationMessage, clientSocket)
+            try:
+                outputValidationMessage = self.validate.login(clientSocket, request.split(' ')[1])
+                self.sendTo(outputValidationMessage, clientSocket)
+            except IndexError:
+                self.sendTo("ERRO - Mensagem a ser enviada deve estar no formato: login username", clientSocket)
 
         #Requisicao de Logout:
         elif(splitRequest[0] in logoutCommands):
-            RequestValidationMessage = validate.logout(clientSocket)
-            self.sendTo(RequestValidationMessage, clientSocket)
+            outputValidationMessage = self.validate.logout(clientSocket)
+            self.sendTo(outputValidationMessage, clientSocket)
 
         #Requisicao de Mensagem a Usuario:
-        elif(splitRequest[0][0] == '@'):
-            if not validate.isSocketAvailable(clientSocket):
-                self.sendTo("ERRO - Voce deve estar logado para enviar mensagens.", clientSocket)
+        elif(len(splitRequest[0]) > 0 and splitRequest[0][0] == '@'):
+            if not self.validate.isSocketAvailable(clientSocket):
+                self.sendTo("ERRO - Voce deve estar logado para enviar e receber mensagens.", clientSocket)
                 return
-            targetSocket = validate.getSocket(splitRequest[0][1:])
+            targetSocket = self.validate.getSocket(splitRequest[0][1:])
             targetUsername = splitRequest[0][1:]
-            thisUsername = validate.getUsername(clientSocket)
+            thisUsername = self.validate.getUsername(clientSocket)
             try:
                 message = splitRequest[1].strip()
                 if thisUsername == targetUsername:
                     self.sendTo("ERRO - Voce nao pode se enviar mensagens.", clientSocket)
                 elif len(message) == 0:
                     self.sendTo("ERRO - Mensagem a ser enviada nao pode conter somente espacos em branco.", clientSocket)
-                elif not validate.isUsernameAvailable(targetUsername):
+                elif not self.validate.isUsernameAvailable(targetUsername):
                     self.sendTo("ERRO - Nao ha usuarios conectados com esse nome no momento.", clientSocket)
                 else:
                     self.sendTo(thisUsername + ": " + message, targetSocket)
@@ -202,63 +212,71 @@ class ServerCommunication:
 
         #Requisicao para Mostrar Lista de Usuarios Disponiveis:
         elif(splitRequest[0] in listUsersCommands):
-            userList = validate.displayAvailableUsers()
+            userList = self.validate.displayAvailableUsers()
             self.sendTo(userList, clientSocket)
         
         #Requisicao Invalida:
         else:
             self.sendTo("ERRO - Comando invalido. Digite 'help' para uma lista de comandos.", clientSocket)
 
+    #Envia a mensagem passada como parametro para todos usuarios conectados no servidor:
     def broadcast(self, message):
-        socketList = RequestValidation().getSocketList()
-        for s in socketList:
+        for s in connectedUsers:
             self.sendTo(message, s)
 
+    #Recebe uma mensagem do socket passado como parametro, a retornando no formato de string:
     def receiveFrom(self, clientSocket):
         return str(clientSocket.recv(2048), encoding = 'utf-8')
 
+    #Envia a mensagem (no formato string) ao socket passado como parametro:
     def sendTo(self, message, clientSocket):
         clientSocket.send(str.encode(message))
 
 
+#---CAMADA DA INTERFACE DE ADMINISTRADOR---
 class ServerInterface:
     def __init__(self, hostIP, hostPort):
+        #Instancia a Camada de Comunicacao:
+        self.comm = ServerCommunication(hostIP, hostPort)
+        #Chama a Main:
         self.main(hostIP, hostPort)
 
     def main(self, hostIP, hostPort):
-        comm = ServerCommunication(hostIP, hostPort)
-        inputs = [sys.stdin, comm.serverSocket]
 
         print("\n----Servidor de Chat Online----\n Pronto para receber conexoes.\n")
         print("Digite 'help' para ver a lista de comandos disponiveis.\n")
 
+        inputs = [sys.stdin, self.comm.serverSocket] #lista de inputs para a funcao select
+
         while True:
-        #Aceita conexao, bloqueia se nao houver pedidos de conexao, comandos no buffer sys.stdin ou requisicoes de clientes ja conectados:
+            #Bloqueia se nao houver pedidos de conexoes novas ou comandos no buffer sys.stdin:
             r, w, e = select.select(inputs, [], [])
             for inputToBeRead in r:
-                if inputToBeRead == comm.serverSocket:
-                    self.initiateClientThread(comm)
+                if inputToBeRead == self.comm.serverSocket:
+                    self.initiateClientThread()
                 elif inputToBeRead == sys.stdin:
                     adminRequest = input()
-                    self.handleAdminRequest(comm, adminRequest)
+                    self.processAdminRequest(adminRequest)
             
-
-    def initiateClientThread(self, comm):
-        clientSocket, address = comm.acceptConnection()
+    #Aceita conexao e delega o processamento de requisicoes deste cliente a uma nova Thread:
+    def initiateClientThread(self):
+        clientSocket, address = self.comm.acceptConnection()
         print("Nova conexao com " + str(address) + " estabelecida.\n")
-        #Inicia uma nova thread para responder requisicoes do novo cliente com a funcao handleRequests, recebendo como argumentos clientSocket e address:
-        clientThread = threading.Thread(target = comm.handleRequests, args = (clientSocket, address))
+        #Inicia uma nova thread para responder requisicoes do novo cliente com o metodo handleRequests da Camada de Comunicacao:
+        clientThread = threading.Thread(target = self.comm.handleRequests, args = (clientSocket, address))
         clientThread.start()
 
-    def handleAdminRequest(self, comm, request):
+    #Processamento de Requisicoes de Administrador:
+    def processAdminRequest(self, request):
         broadcastCommands = {'broadcast', 'Broadcast', '!broadcast', '!Broadcast'}
         kickCommands = {'kick', 'Kick', '!kick', '!Kick', '!ban', '!Ban'}
         listUsersCommands = {'list', 'List', 'users', 'Users', 'lista', '!Lista', '!list', '!List', '!users', '!Users', '!lista', '!Lista', 'listusers', 'Listusers', '!listusers', '!Listusers'}
         exitCommands = {'exit', 'Exit', 'quit', 'Quit', 'disconnect', 'Disconnect', '!exit', '!Exit', '!quit', '!Quit', '!disconnect', '!Disconnect'}
         helpCommands = {'help', 'Help', '!help', '!Help'}
 
-        validate = RequestValidation()
+        validate = self.comm.validate #atribuicao realizada para melhorar legibilidade
 
+        #Separa o request em uma lista de 2 strings no primeiro espaco encontrado:
         splitRequest = request.split(' ', 1)
 
         #Requisicao de Help:
@@ -274,13 +292,13 @@ class ServerInterface:
         #Requisicao de Saida:
         elif splitRequest[0] in exitCommands:
             print("Desligando o servidor.")
-            comm.serverSocket.close()
-            comm.broadcast('$QUIT')
+            self.comm.serverSocket.close()
+            self.comm.broadcast('$QUIT') #mensagem especial do protocolo da camada de aplicacao para desconectar usuarios
             sys.exit()
 
         #Requisicao para Mostrar Lista de Usuarios Conectados:
         elif splitRequest[0] in listUsersCommands:
-            print(validate.displayConnectedUsers()) #incluira todos usuarios conectados, incluindo aqueles que nao estiverem disponiveis (logados) para troca de mensagens
+            print(validate.displayConnectedUsers()) #incluira todos usuarios conectados na lista, incluindo aqueles que nao estiverem disponiveis (logados) para troca de mensagens
 
         #Requisicao para Deslogar um Usuario:
         elif splitRequest[0] in kickCommands:
@@ -289,7 +307,7 @@ class ServerInterface:
                 targetSocket = validate.getSocket(targetUsername)
                 if targetSocket:
                     validate.logout(targetSocket)
-                    comm.sendTo("Voce foi deslogado remotamente pelo servidor.\nUtilize o comando de 'login' para relogar ou 'exit' para sair da aplicacao.", targetSocket)
+                    self.comm.sendTo("Voce foi deslogado remotamente pelo servidor.\nUtilize o comando de 'login' para relogar ou 'exit' para sair da aplicacao.", targetSocket)
                     print("Usuario deslogado com sucesso.")
                 else:
                     print("ERRO - Usuario invalido.")
@@ -302,7 +320,7 @@ class ServerInterface:
                 message = splitRequest[1].strip()
                 if len(message) > 0:
                     message = "[BROADCAST] " + message
-                    comm.broadcast(message)
+                    self.comm.broadcast(message)
                     print("Mensagem enviada para todos os clientes conectados.")
                 else:
                     print("ERRO - Mensagem a ser enviada nao pode conter somente espacos em branco.")
@@ -310,7 +328,7 @@ class ServerInterface:
                 print("ERRO - Comando deve estar no formato: broadcast message")
 
         #Requisicao de Mensagem a Usuario:
-        elif(splitRequest[0][0] == '@'):
+        elif(len(splitRequest[0]) > 0 and splitRequest[0][0] == '@'):
             targetSocket = validate.getSocket(splitRequest[0][1:])
             targetUsername = splitRequest[0][1:]
             try:
@@ -320,7 +338,7 @@ class ServerInterface:
                 elif not validate.isUsernameAvailable(targetUsername):
                     print("ERRO - Nao ha usuarios conectados com esse nome no momento.")
                 else:
-                    comm.sendTo("[ADMIN] " + message, targetSocket)
+                    self.comm.sendTo("[ADMIN] " + message, targetSocket)
             except IndexError:
                 print("ERRO - Mensagem a ser enviada deve estar no formato: @user message")
 
